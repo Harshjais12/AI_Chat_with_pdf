@@ -73,98 +73,162 @@ if api_key:
             st.session_state.get_session_history = None
         
         if uploaded_files:
-            documents = []
-            for uploaded_file in uploaded_files:
-                try:
-                    temppdf = f"./temp_{uploaded_file.name}"
-                    with open(temppdf, "wb") as file:
-                        file.write(uploaded_file.getvalue())
-                    
-                    loader = PyPDFLoader(temppdf)
-                    docs = loader.load()
-                    
-                    # Filter out empty documents
-                    valid_docs = [doc for doc in docs if doc.page_content.strip()]
-                    documents.extend(valid_docs)
-                    
-                    # Clean up temp file
-                    os.remove(temppdf)
-                    
-                except Exception as e:
-                    st.error(f"Error loading {uploaded_file.name}: {str(e)}")
-                    continue
-            
-            # Check if we have any valid documents
-            if not documents:
-                st.error("No valid content found in the uploaded PDF files. Please check your files and try again.")
-            else:
-                # Create vector store using FAISS instead of Chroma
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
-                splits = text_splitter.split_documents(documents)
+            with st.spinner("Processing PDF files..."):
+                documents = []
+                processed_files = []
                 
-                # Check if we have any splits after text splitting
-                if not splits:
-                    st.error("No text content could be extracted from the PDF files.")
-                else:
+                for uploaded_file in uploaded_files:
                     try:
-                        vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
-                        retriever = vectorstore.as_retriever()
+                        # Show progress for each file
+                        st.info(f"Processing {uploaded_file.name}...")
                         
-                        # Set up RAG chain (moved inside this try block)
-                        contextualize_q_system_prompt = (
-                            "Given a chat history and the latest user question "
-                            "which might reference context in the chat history, "
-                            "formulate a standalone question which can be understood "
-                            "without the chat history. Do NOT answer the question, "
-                            "just reformulate it if needed and otherwise return it as is."
-                        )
+                        temppdf = f"./temp_{uploaded_file.name}"
+                        with open(temppdf, "wb") as file:
+                            file.write(uploaded_file.getvalue())
                         
-                        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-                            ("system", contextualize_q_system_prompt),
-                            MessagesPlaceholder("chat_history"),
-                            ("human", "{input}"),
-                        ])
+                        loader = PyPDFLoader(temppdf)
+                        docs = loader.load()
                         
-                        history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+                        # Filter out empty documents and add file info
+                        valid_docs = []
+                        for doc in docs:
+                            if doc.page_content.strip():
+                                # Add source file information to metadata
+                                doc.metadata['source_file'] = uploaded_file.name
+                                valid_docs.append(doc)
                         
-                        system_prompt = (
-                            "You are an assistant for question-answering tasks. "
-                            "Use the following pieces of retrieved context to answer "
-                            "the question. If you don't know the answer, say that you "
-                            "don't know. Use three sentences maximum and keep the "
-                            "answer concise."
-                            "\n\n"
-                            "{context}"
-                        )
+                        if valid_docs:
+                            documents.extend(valid_docs)
+                            processed_files.append(uploaded_file.name)
+                            st.success(f"✅ {uploaded_file.name}: {len(valid_docs)} pages extracted")
+                        else:
+                            st.warning(f"⚠️ {uploaded_file.name}: No readable text found")
                         
-                        qa_prompt = ChatPromptTemplate.from_messages([
-                            ("system", system_prompt),
-                            MessagesPlaceholder("chat_history"),
-                            ("human", "{input}"),
-                        ])
-                        
-                        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-                        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-                        
-                        def get_session_history(session: str) -> BaseChatMessageHistory:
-                            if session_id not in st.session_state.store:
-                                st.session_state.store[session_id] = ChatMessageHistory()
-                            return st.session_state.store[session_id]
-                        
-                        conversational_rag_chain = RunnableWithMessageHistory(
-                            rag_chain, get_session_history,
-                            input_messages_key="input",
-                            history_messages_key="chat_history",
-                            output_messages_key="answer"
-                        )
-                        
-                        st.session_state.rag_chain = conversational_rag_chain
-                        st.session_state.get_session_history = get_session_history
-                        st.success(f"Successfully loaded {len(uploaded_files)} PDF(s) with {len(documents)} pages!")
+                        # Clean up temp file
+                        if os.path.exists(temppdf):
+                            os.remove(temppdf)
                         
                     except Exception as e:
-                        st.error(f"Error creating vector store: {str(e)}")
-                        st.error("This might be due to empty or corrupted PDF content. Please try different PDF files.")
+                        st.error(f"❌ Error loading {uploaded_file.name}: {str(e)}")
+                        # Clean up temp file even if there's an error
+                        if 'temppdf' in locals() and os.path.exists(temppdf):
+                            os.remove(temppdf)
+                        continue
+                
+                # Check if we have any valid documents
+                if not documents:
+                    st.error("❌ No valid content found in any of the uploaded PDF files.")
+                    st.info("💡 Please ensure your PDFs contain readable text (not just images) and try again.")
+                    # Clear any existing RAG chain
+                    st.session_state.rag_chain = None
+                    st.session_state.get_session_history = None
+                else:
+                    try:
+                        st.info(f"📝 Found {len(documents)} pages of content. Creating knowledge base...")
+                        
+                        # Create vector store using FAISS instead of Chroma
+                        text_splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=1000,  # Reduced chunk size for better retrieval
+                            chunk_overlap=200,
+                            separators=["\n\n", "\n", " ", ""]
+                        )
+                        splits = text_splitter.split_documents(documents)
+                        
+                        # Check if we have any splits after text splitting
+                        if not splits:
+                            st.error("❌ No text content could be extracted and split from the PDF files.")
+                            st.session_state.rag_chain = None
+                            st.session_state.get_session_history = None
+                        else:
+                            st.info(f"🔄 Creating embeddings for {len(splits)} text chunks...")
+                            
+                            # Create embeddings with progress indication
+                            vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
+                            retriever = vectorstore.as_retriever(
+                                search_type="similarity",
+                                search_kwargs={"k": 3}  # Return top 3 most relevant chunks
+                            )
+                            
+                            st.info("🤖 Setting up conversational AI...")
+                            
+                            # Set up RAG chain (moved inside this try block)
+                            contextualize_q_system_prompt = (
+                                "Given a chat history and the latest user question "
+                                "which might reference context in the chat history, "
+                                "formulate a standalone question which can be understood "
+                                "without the chat history. Do NOT answer the question, "
+                                "just reformulate it if needed and otherwise return it as is."
+                            )
+                            
+                            contextualize_q_prompt = ChatPromptTemplate.from_messages([
+                                ("system", contextualize_q_system_prompt),
+                                MessagesPlaceholder("chat_history"),
+                                ("human", "{input}"),
+                            ])
+                            
+                            history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+                            
+                            system_prompt = (
+                                "You are an assistant for question-answering tasks. "
+                                "Use the following pieces of retrieved context to answer "
+                                "the question. If you don't know the answer based on the "
+                                "provided context, say that you don't know. Keep your answers "
+                                "concise but informative."
+                                "\n\n"
+                                "{context}"
+                            )
+                            
+                            qa_prompt = ChatPromptTemplate.from_messages([
+                                ("system", system_prompt),
+                                MessagesPlaceholder("chat_history"),
+                                ("human", "{input}"),
+                            ])
+                            
+                            question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+                            rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+                            
+                            def get_session_history(session: str) -> BaseChatMessageHistory:
+                                if session_id not in st.session_state.store:
+                                    st.session_state.store[session_id] = ChatMessageHistory()
+                                return st.session_state.store[session_id]
+                            
+                            conversational_rag_chain = RunnableWithMessageHistory(
+                                rag_chain, get_session_history,
+                                input_messages_key="input",
+                                history_messages_key="chat_history",
+                                output_messages_key="answer"
+                            )
+                            
+                            # Store in session state
+                            st.session_state.rag_chain = conversational_rag_chain
+                            st.session_state.get_session_history = get_session_history
+                            st.session_state.processed_files = processed_files
+                            st.session_state.total_chunks = len(splits)
+                            
+                            st.success(f"🎉 Successfully processed {len(processed_files)} PDF(s)!")
+                            st.info(f"📊 Knowledge base created with {len(splits)} text chunks from {len(documents)} pages")
+                            
+                            # Show processed files
+                            with st.expander("📁 Processed Files"):
+                                for file in processed_files:
+                                    st.write(f"✅ {file}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error creating knowledge base: {str(e)}")
+                        st.error("💡 This might be due to:")
+                        st.write("- Empty or corrupted PDF content")
+                        st.write("- Very large PDF files (try smaller files)")
+                        st.write("- Network issues with embedding model")
+                        st.session_state.rag_chain = None
+                        st.session_state.get_session_history = None
+        
+        # Show current status
+        if hasattr(st.session_state, 'rag_chain') and st.session_state.rag_chain is not None:
+            st.success("✅ PDF knowledge base is ready! You can now ask questions about your documents.")
+            if hasattr(st.session_state, 'processed_files'):
+                st.caption(f"Loaded files: {', '.join(st.session_state.processed_files)}")
+        else:
+            st.info("📤 Please upload PDF files to start chatting with your documents.")
 
     
     # Set up search agent (for AI Search and Combined mode)
