@@ -66,6 +66,12 @@ if api_key:
         st.subheader("📄 PDF Upload")
         uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
         
+        # Initialize variables to avoid UnboundLocalError
+        if 'rag_chain' not in st.session_state:
+            st.session_state.rag_chain = None
+        if 'get_session_history' not in st.session_state:
+            st.session_state.get_session_history = None
+        
         if uploaded_files:
             documents = []
             for uploaded_file in uploaded_files:
@@ -163,6 +169,10 @@ if api_key:
     
     # Set up search agent (for AI Search and Combined mode)
     if mode in ["AI Search", "Combined Mode"]:
+        # Initialize search agent if not exists
+        if 'search_agent' not in st.session_state:
+            st.session_state.search_agent = None
+            
         tools = [search, arxiv, wiki]
         search_agent = initialize_agent(
             tools, llm, 
@@ -186,33 +196,41 @@ if api_key:
         with st.chat_message("assistant"):
             if mode == "PDF Chat":
                 # Handle PDF chat only
-                if hasattr(st.session_state, 'rag_chain'):
-                    session_history = st.session_state.get_session_history(session_id)
-                    response = st.session_state.rag_chain.invoke(
-                        {"input": prompt},
-                        config={"configurable": {"session_id": session_id}},
-                    )
-                    answer = response['answer']
-                    st.write(answer)
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                if hasattr(st.session_state, 'rag_chain') and st.session_state.rag_chain is not None:
+                    try:
+                        session_history = st.session_state.get_session_history(session_id)
+                        response = st.session_state.rag_chain.invoke(
+                            {"input": prompt},
+                            config={"configurable": {"session_id": session_id}},
+                        )
+                        answer = response['answer']
+                        st.write(answer)
+                        st.session_state.messages.append({"role": "assistant", "content": answer})
+                    except Exception as e:
+                        st.error(f"Error processing your question: {str(e)}")
+                        st.write("Please try rephrasing your question or upload the PDF files again.")
                 else:
                     st.write("Please upload PDF files first to use PDF chat mode.")
             
             elif mode == "AI Search":
                 # Handle AI search only
-                if hasattr(st.session_state, 'search_agent'):
-                    st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
-                    response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
-                    st.write(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
+                if hasattr(st.session_state, 'search_agent') and st.session_state.search_agent is not None:
+                    try:
+                        st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
+                        response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
+                        st.write(response)
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+                    except Exception as e:
+                        st.error(f"Search error: {str(e)}")
+                        st.write("Please try a different search query.")
                 else:
-                    st.write("Search agent not initialized.")
+                    st.write("Search agent not initialized. Please check your API key.")
             
             elif mode == "Combined Mode":
                 # Handle combined mode - try PDF first, then search if needed
                 pdf_response = None
                 
-                if hasattr(st.session_state, 'rag_chain'):
+                if hasattr(st.session_state, 'rag_chain') and st.session_state.rag_chain is not None:
                     try:
                         session_history = st.session_state.get_session_history(session_id)
                         rag_response = st.session_state.rag_chain.invoke(
@@ -228,13 +246,17 @@ if api_key:
                             st.write("\n🔍 Searching the web for additional information...")
                             
                             # Use search agent for additional information
-                            if hasattr(st.session_state, 'search_agent'):
-                                st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
-                                search_response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
-                                final_response = f"PDF Response: {pdf_response}\n\nWeb Search Results: {search_response}"
-                                st.write("\n📊 Combined Response:")
-                                st.write(search_response)
-                                st.session_state.messages.append({"role": "assistant", "content": final_response})
+                            if hasattr(st.session_state, 'search_agent') and st.session_state.search_agent is not None:
+                                try:
+                                    st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
+                                    search_response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
+                                    final_response = f"PDF Response: {pdf_response}\n\nWeb Search Results: {search_response}"
+                                    st.write("\n📊 Combined Response:")
+                                    st.write(search_response)
+                                    st.session_state.messages.append({"role": "assistant", "content": final_response})
+                                except Exception as e:
+                                    st.error(f"Search error: {str(e)}")
+                                    st.session_state.messages.append({"role": "assistant", "content": pdf_response})
                             else:
                                 st.session_state.messages.append({"role": "assistant", "content": pdf_response})
                         else:
@@ -245,21 +267,31 @@ if api_key:
                     except Exception as e:
                         st.error(f"Error with PDF processing: {str(e)}")
                         # Fall back to search
-                        if hasattr(st.session_state, 'search_agent'):
-                            st.write("🔍 Falling back to web search...")
+                        if hasattr(st.session_state, 'search_agent') and st.session_state.search_agent is not None:
+                            try:
+                                st.write("🔍 Falling back to web search...")
+                                st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
+                                response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
+                                st.write(response)
+                                st.session_state.messages.append({"role": "assistant", "content": response})
+                            except Exception as search_e:
+                                st.error(f"Search also failed: {str(search_e)}")
+                                st.write("Both PDF and search failed. Please check your setup and try again.")
+                        else:
+                            st.write("PDF processing failed and search agent not available.")
+                
+                else:
+                    # No PDF loaded, use search only
+                    if hasattr(st.session_state, 'search_agent') and st.session_state.search_agent is not None:
+                        try:
+                            st.write("🔍 No PDFs loaded, using web search...")
                             st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
                             response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
                             st.write(response)
                             st.session_state.messages.append({"role": "assistant", "content": response})
-                
-                else:
-                    # No PDF loaded, use search only
-                    if hasattr(st.session_state, 'search_agent'):
-                        st.write("🔍 No PDFs loaded, using web search...")
-                        st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
-                        response = st.session_state.search_agent.run(prompt, callbacks=[st_cb])
-                        st.write(response)
-                        st.session_state.messages.append({"role": "assistant", "content": response})
+                        except Exception as e:
+                            st.error(f"Search error: {str(e)}")
+                            st.write("Please try a different search query.")
                     else:
                         st.write("Please upload PDF files or ensure search agent is initialized.")
 
