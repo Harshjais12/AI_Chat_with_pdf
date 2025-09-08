@@ -40,3 +40,4 @@ unstructured
 pytube
 numexpr
 huggingface_hub
+ddg-scraper
