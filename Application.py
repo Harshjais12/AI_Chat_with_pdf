@@ -32,7 +32,7 @@ arxiv = ArxivQueryRun(api_wrapper=arxiv_wrapper)
 wiki_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=250)
 wiki = WikipediaQueryRun(api_wrapper=wiki_wrapper)
 
-search = DuckDuckGoSearchRun(name="Search")
+
 
 st.title("🔎 Combined PDF RAG & AI Search Chatbot")
 st.write("Upload PDFs to chat with their content OR use AI-powered web search")
@@ -237,7 +237,7 @@ if api_key:
         if 'search_agent' not in st.session_state:
             st.session_state.search_agent = None
             
-        tools = [search, arxiv, wiki]
+        tools = [arxiv, wiki]
         search_agent = initialize_agent(
             tools, llm, 
             agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, 
@@ -377,3 +377,4 @@ if st.sidebar.checkbox("Show Session Info"):
     st.sidebar.write(f"Messages in session: {len(st.session_state.messages)}")
     if 'store' in st.session_state and session_id in st.session_state.store:
         st.sidebar.write(f"Chat history length: {len(st.session_state.store[session_id].messages)}")
+
