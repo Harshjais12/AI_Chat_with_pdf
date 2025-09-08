@@ -41,3 +41,10 @@ pytube
 numexpr
 huggingface_hub
 ddg-scraper
+streamlit
+langchain
+langchain-community
+duckduckgo-search
+pypdf2
+
+
