@@ -1,7 +1,12 @@
 import streamlit as st
 # from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.retrieval import create_retrieval_chain
+
+# from langchain.chains.history_aware_retriever import create_history_aware_retriever
+# from langchain.chains.retrieval import create_retrieval_chain
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_community.vectorstores import FAISS
@@ -380,5 +385,6 @@ if st.sidebar.checkbox("Show Session Info"):
     st.sidebar.write(f"Messages in session: {len(st.session_state.messages)}")
     if 'store' in st.session_state and session_id in st.session_state.store:
         st.sidebar.write(f"Chat history length: {len(st.session_state.store[session_id].messages)}")
+
 
 
