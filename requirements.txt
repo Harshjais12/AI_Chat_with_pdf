@@ -1,7 +1,7 @@
+langchain>=0.1.0
+langchain-community>=0.0.20
 langchain-openai
-langchain == 0.1.0
 python-dotenv
-langchain_community
 langchain_core
 langchain-openai
 langchain
@@ -46,6 +46,7 @@ langchain
 langchain-community
 duckduckgo-search
 pypdf2
+
 
 
 
